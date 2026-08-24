@@ -295,8 +295,6 @@ class HyperHDRBaseLight(LightEntity):
         else:
             rgb_color = self._rgb_color
 
-        stored_brightness = self._brightness
-
         if ATTR_HS_COLOR in kwargs:
             self._set_internal_state(rgb_color=rgb_color)
         if ATTR_BRIGHTNESS in kwargs:
@@ -407,12 +405,12 @@ class HyperHDRBaseLight(LightEntity):
             effective_brightness = (
                 kwargs[ATTR_BRIGHTNESS] if ATTR_BRIGHTNESS in kwargs else self._brightness
             )
-            base_rgb = rgb_color
-            if ATTR_HS_COLOR not in kwargs:
-                base_rgb = self._unscale_rgb_from_brightness(
-                    rgb_color, stored_brightness
-                )
-            send_color = self._scale_rgb_to_brightness(base_rgb, effective_brightness)
+            # self._rgb_color is always held at full brightness: it is set from
+            # ATTR_HS_COLOR above, or restored by _update_priorities, which already
+            # unscales what HyperHDR reports back. Un-scaling it a second time here
+            # drove channels into the 255 clamp, shifting hue and washing colours
+            # out towards white on every brightness change.
+            send_color = self._scale_rgb_to_brightness(rgb_color, effective_brightness)
             if not await self._client.async_send_set_color(
                 **{
                     const.KEY_PRIORITY: self._get_option(CONF_PRIORITY),
