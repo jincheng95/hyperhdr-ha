@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 from typing import Any
 
@@ -89,19 +90,40 @@ async def async_patch_smoothing_config(
     instance_num: int,
     **fields: Any,
 ) -> bool:
-    """Merge-patch smoothing config and notify entities."""
+    """Patch smoothing fields by rewriting the full instance config.
+
+    HyperHDR's setconfig auto-corrects a partial config by re-defaulting every
+    required section (leds, device, network, general), so only whole configs
+    are sent.
+    """
     entry_data = hass.data[DOMAIN][entry_id]
     hyperhdr_client: client.HyperHDRClient = entry_data[CONF_INSTANCE_CLIENTS][
         instance_num
     ]
-    updated = await hyperhdr_client.async_update_smoothing_config(**fields)
-    if updated is None:
+
+    response = await hyperhdr_client.async_get_config()
+    full = (response or {}).get("info") if client.ResponseOK(response) else None
+    if not isinstance(full, dict) or not all(
+        key in full for key in ("leds", "device", "network", "general", "smoothing")
+    ):
+        _LOGGER.warning(
+            "Refusing smoothing write: getconfig did not return a full config"
+        )
+        return False
+
+    full = copy.deepcopy(full)
+    full["smoothing"] = {**full["smoothing"], **fields}
+
+    if not client.ResponseOK(await hyperhdr_client.async_set_config(config=full)):
         _LOGGER.warning(
             "Failed to update HyperHDR smoothing config fields %s",
             list(fields),
         )
         return False
 
+    updated = await hyperhdr_client.async_get_smoothing_config()
+    if updated is None:
+        updated = full["smoothing"]
     entry_data.setdefault(CONF_SMOOTHING_CONFIGS, {})[instance_num] = updated
     async_dispatcher_send(
         hass,
