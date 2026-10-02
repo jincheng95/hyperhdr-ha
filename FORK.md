@@ -19,10 +19,10 @@ same upstream base. It resets to `1` whenever the fork is rebuilt on a newer ups
 
 ```
 v1.0.0        upstream
-v1.0.0.1      fork, first change on top of upstream 1.0.0   <- current
-v1.0.0.2      fork, second change on the same base
-v1.0.1        upstream (hypothetical)
-v1.0.1.1      fork, rebuilt on upstream 1.0.1
+v1.0.0.1      fork, first change on top of upstream 1.0.0
+v1.2.1        upstream
+v1.2.1.1      fork, rebuilt on upstream 1.2.1               <- current
+v1.2.1.2      fork, second change on the same base
 ```
 
 Ordering is monotonic under HACS's `AwesomeVersion` comparison, which compares segment by
@@ -42,7 +42,7 @@ must carry a `hyperhdr.zip` asset whose contents sit at the **zip root** (`manif
 `__init__.py`, …) — HACS unpacks that into `custom_components/hyperhdr/`.
 
 ```sh
-VERSION=1.0.0.2                       # bump the fourth segment
+VERSION=1.2.1.2                       # bump the fourth segment
 # edit custom_components/hyperhdr/manifest.json -> "version": "$VERSION"
 git commit -am "chore: bump manifest to $VERSION"
 rm -f hyperhdr.zip
@@ -60,10 +60,13 @@ git merge upstream/master        # resolve manifest.json version by hand
 # set manifest version to <new upstream>.1, then cut a release as above
 ```
 
-Conflict-prone files: `manifest.json` (the `version` field, every time, plus the fork's `name`
-/ `codeowners` / URL changes) and `hacs.json` (`name`). `light.py` will conflict only if
-upstream touches the same brightness code — which is the outcome to hope for, since it would
-mean the bug was fixed upstream and this fork can retire.
+Conflict-prone files:
+
+- `manifest.json` conflicts on the `version` field every time. The fork's `name`, `codeowners`
+  and URL changes sit beside it.
+- `hacs.json` can conflict on `name`.
+- `smoothing_config.py` conflicts if upstream touches `async_patch_smoothing_config`. Keep the
+  full-config guard unless upstream now sends whole configs itself.
 
 ## Local changes vs upstream
 
@@ -73,45 +76,45 @@ mean the bug was fixed upstream and this fork can retire.
 added to `codeowners` (HACS renders codeowners as the repository authors), and
 `documentation` / `issue_tracker` point at this fork rather than upstream.
 
-### `custom_components/hyperhdr/light.py` — brightness no longer washes colours out
+### `light.py` — no fork delta
 
-Upstream [PR #100](https://github.com/Shaffer-Softworks/hyperhdr-ha/pull/100) fixed
-[issue #99](https://github.com/Shaffer-Softworks/hyperhdr-ha/issues/99) ("Brightness does not
-affect Solid color, but works for effects") by scaling the RGB triple client-side by
-`brightness / 255` before sending it to the colour priority, and un-scaling it again when
-syncing priorities back from HyperHDR. That mechanism is sound and is **kept here**.
+Upstream [#119](https://github.com/Shaffer-Softworks/hyperhdr-ha/pull/119) (433d7d2) makes the
+same deletion as the fork's d4170d7. Both stop the second un-scale that walked solid colours
+toward white on every brightness change. #119 also caches the full-brightness RGB for the
+session and floors solid-colour brightness at 12. The fork took upstream's `light.py` verbatim
+in v1.2.1.1 and now carries no change to it.
 
-The defect is that the un-scaling happens **twice**. `_update_priorities` already un-scales
-the colour it reads back from the server before storing it in `self._rgb_color`, so that field
-always holds a full-brightness colour. A later brightness-only `async_turn_on` then un-scaled
-that already-un-scaled value a second time against `stored_brightness`:
+### `smoothing_config.py` — smoothing writes send the whole config
 
-```python
-base_rgb = rgb_color
-if ATTR_HS_COLOR not in kwargs:
-    base_rgb = self._unscale_rgb_from_brightness(rgb_color, stored_brightness)
-```
+Upstream v1.1.0 (#115) added nine smoothing entities, disabled by default. Each one writes
+through `async_patch_smoothing_config`. Upstream calls the library's
+`async_update_smoothing_config`, which sends `config/setconfig` with a smoothing-only fragment.
 
-Because `_unscale_rgb_from_brightness` clamps each channel independently at 255, any channel
-that overshoots gets pinned there. That changes the *ratios* between channels, so hue shifts
-and saturation collapses — the colour walks toward white on every brightness change. Starting
-from a deep blue of RGB(13, 77, 255) and moving the slider three times:
+HyperHDR does not merge that fragment. `InstanceConfig::saveSettings(config, correct=true)`
+validates it against the full instance schema and fails, so it auto-corrects the config
+(`sources/base/InstanceConfig.cpp`). The `leds`, `device`, `network` and `general` schemas are
+all required. The schema checker re-creates each missing required section from its defaults
+(`sources/json-utils/jsonschema/QJsonSchemaChecker.cpp`). The corrected config is then saved.
+One smoothing toggle would therefore reset the 241-LED layout, the device settings and the network auth.
+A partial write did exactly that on 2026-08-23.
 
-| brightness | sent to HyperHDR | reported back to HA |
-| ---------- | ---------------- | ------------------- |
-| 255        | (13, 77, 255)    | (13, 77, 255)       |
-| 51         | (3, 15, 51)      | (15, 75, 255)       |
-| 102        | (30, 102, 102)   | (75, 255, 255)      |
-| 204        | (150, 204, 204)  | (188, 255, 255)     |
+The entities register on this install because the server has `localAdminAuth: false`. HyperHDR
+grants LAN clients admin rights, so `getconfig` succeeds without a password.
 
-Pure primaries such as (0, 0, 255) or (255, 0, 0) are immune, because a zero channel can never
-overshoot the clamp. Upstream's E2E tests (`scripts/docker_test_solid_brightness.py`) exercise
-only solid red and solid blue, which is why the regression was not caught.
+The fork replaces the body of `async_patch_smoothing_config` with a read-modify-write:
 
-The fix deletes the second un-scale and sends `self._rgb_color` scaled exactly once. Sweeping
-the slider now holds hue and saturation steady; the only residual movement is ±7/255 of 8-bit
-quantisation at the very bottom of the range, which is inherent to sending a dimmed 8-bit
-triple and does not accumulate.
+1. Call `getconfig` and take the full config from `info`.
+2. Refuse the write and log a warning if `leds`, `device`, `network`, `general` or `smoothing`
+   is missing.
+3. Merge the new fields into `smoothing` on a deep copy.
+4. Send the whole config back with `setconfig`.
+5. Re-read smoothing, or keep the merged values if the re-read fails, and notify the entities.
+
+The signature and the `bool` return are unchanged, so the callers in `number.py`, `select.py`
+and `switch.py` work as before. No other code path in the integration sends `setconfig`.
+
+The HyperHDR web UI also saves whole configs. An API write and a UI save can overwrite each
+other, so the last writer wins.
 
 ### Deliberately NOT changed
 
