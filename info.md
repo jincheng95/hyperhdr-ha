@@ -29,6 +29,33 @@ HyperHDR instances are automatically discovered via **SSDP**. When found, a noti
 <!-- {% endif %} -->
 
 <!-- {% if installed %} -->
+# Integration v1.2.1
+
+HyperHDR **v22** smoothing controls via authenticated config get/set:
+
+- **New switches:** Anti-flicker Filter, Continuous Output
+- **New numbers:** Smoothing Factor, Stiffness, Damping, Y Limit
+- **Reworked:** Smoothing Time / Update Frequency / Type use v22 config schema (`time_ms`, `HybridRgbInterpolator`, …)
+- **Removed:** Smoothing Decay (not in v22 schema); pruned automatically
+- **Auth:** Smoothing config entities require successful `config` getconfig — set **Admin Password** in Options when local admin auth is enabled
+- **Dependency:** `hyperhdr-py-sickkick` `0.2.2` → `0.2.3`
+
+# Integration v1.0.2
+
+Polish on top of v1.0.1:
+
+- **Average Color entity:** renames legacy `*_none` entity IDs to `*_average_color` on load
+- **Docs:** README and wiki dependency pin updated to `hyperhdr-py-sickkick==0.2.2`
+
+# Integration v1.0.1
+
+Fixes HyperHDR JSON validation noise and LED stream auth issues ([#110](https://github.com/Shaffer-Softworks/hyperhdr-ha/issues/110)).
+
+- **Average Color:** uses HyperHDR-valid `current-state` / `average-color` (via `hyperhdr-py-sickkick==0.2.2`); parses `{red, green, blue}`; works with cameras disabled
+- **LED cameras:** lazy-start WebSockets on first view; no reconnect spam after permanent auth failure
+- **Admin password:** must be at least 8 characters; clearing Options removes a stored password
+- **Dependency:** `hyperhdr-py-sickkick` `0.2.1` → `0.2.2`
+
 # Integration v0.10.1
 
 Integration manifest **0.1.9**; GitHub release **v0.10.1**.
