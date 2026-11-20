@@ -16,18 +16,18 @@ HyperHDR is an open source bias lighting implementation which runs on many platf
 | `sensor` | Monitor visible priority and average color information. |
 | `switch` | Toggle HyperHDR components, plus Anti-flicker Filter and Continuous Output when smoothing config is available. |
 | `number` | Smoothing parameters (time, update frequency, factor, stiffness, damping, Y limit) when config get/set is available. |
-| `select` | Choose v22 smoothing interpolator type when config get/set is available. |
+| `select` | HDR Tone Mapping Mode (Off / On / Auto), plus v22 smoothing interpolator type when config get/set is available. |
 
 ### Key Features
 
 - **LED Colors Camera**: Live WebSocket stream of the HyperHDR imagestream output — ideal for PicCap instances or visualizing exact LED output.
 - **LED Gradient Camera**: Real-time per-LED gradient visualization rendered as a JPEG image from raw RGB data.
 - **Average Color Sensor**: Average RGB as hex with attributes, from `current-state`/`average-color` RPC (with LED stream and priority-color fallbacks).
-- **HDR Tone Mapping**: Adjust HDR tone mapping intensity with a dedicated number entity. Supports both legacy `hdrToneMappingMode` and the newer `videomodehdr` command paths.
+- **HDR Tone Mapping Mode**: Select entity for Off / On / **Auto**. Off/On use `videomodehdr`; Auto toggles Image Processing `automaticToneMapping.enable` (v21+, via config get/set — Admin Password when required). Distinct from the HDR component switch, which enables or disables HDR processing.
 - **Smoothing Controls** *(conditional)*: Number and select entities for HyperHDR v22 smoothing config (`time_ms`, update frequency, factor, stiffness, damping, Y limit, interpolator type) — created when `config` getconfig succeeds. Requires **Admin Password** (or open admin auth) when HyperHDR local admin authentication is enabled.
 - **Anti-flicker / Continuous Output** *(conditional)*: Config switches for `antiFlickeringFilter` and `continuousOutput`.
-- **Component Switches**: Enable/disable HyperHDR components (advanced users).
-- **Automatic Entity Cleanup**: Stale entities from removed features (old camera, color engine, decay, unsupported smoothing) are automatically pruned from the entity registry on integration load.
+- **Component Switches**: Enable/disable HyperHDR components (advanced users), including an HDR Tone Mapping component on/off switch.
+- **Automatic Entity Cleanup**: Stale entities from removed features (old camera, color engine, HDR intensity number, decay, unsupported smoothing) are automatically pruned from the entity registry on integration load.
 - **SSDP Auto-Discovery**: HyperHDR instances on your network are automatically discovered via SSDP/UPnP — no manual IP entry required.
 
 ![hyperhdr-logo](https://github.com/Shaffer-Softworks/hyperhdr-ha/blob/master/hyperhdr-logo.png)
@@ -108,16 +108,16 @@ After the integration is set up, you can adjust the following via **Options** (g
 
 Entities are created automatically for each running HyperHDR instance:
 
-- **Always created**: Light, Priority Light, Clear Priority button, Component Switches, HDR Tone Mapping, Visible Priority Sensor, Average Color Sensor, LED Colors Camera, LED Gradient Camera.
-- **Conditionally created**: Smoothing Time, Smoothing Decay, Smoothing Update Frequency, and Smoothing Type entities are only created when the connected HyperHDR server exposes smoothing data in its `serverinfo` response. If the server does not expose this data, these entities are not created at all.
-- **Disabled by default**: Camera entities and most number/select entities are disabled by default to avoid unnecessary overhead. Enable them in Home Assistant's entity settings if needed.
+- **Always created**: Light, Priority Light, Clear Priority button, Component Switches, HDR Tone Mapping Mode select, Visible Priority Sensor, Average Color Sensor, LED Colors Camera, LED Gradient Camera.
+- **Conditionally created**: Smoothing Time, Update Frequency, Factor, Stiffness, Damping, Y Limit, Smoothing Type, Anti-flicker, and Continuous Output entities are only created when HyperHDR `config` getconfig returns a smoothing object. If that fails (for example missing Admin Password), these entities are not created.
+- **Disabled by default**: Camera entities and most number/select/switch entities are disabled by default to avoid unnecessary overhead. Enable them in Home Assistant's entity settings if needed.
 
 ### Automatic Stale Entity Cleanup
 
 When upgrading from older versions, the integration automatically removes stale entities from the Home Assistant entity registry:
 
-- **Permanently removed**: The old JSON-API camera entity and the Color Engine select entity are always cleaned up.
-- **Conditionally removed**: Smoothing entities (time, decay, update frequency, type) are removed for any instance whose server does not expose smoothing data.
+- **Permanently removed**: The old JSON-API camera, Color Engine select, HDR intensity number, and Smoothing Decay number are always cleaned up.
+- **Conditionally removed**: Smoothing config entities are removed for any instance whose smoothing config could not be loaded.
 
 No manual intervention is required — the cleanup runs on every integration load.
 
@@ -128,6 +128,7 @@ The **LED Colors** camera entity streams the HyperHDR imagestream over a dedicat
 - **Purpose**: Designed for **PicCap** instances where the standard MJPEG stream may not work, or for visualizing the exact LED output.
 - **Disabled by Default**: This entity is **disabled by default**. You must enable it in Home Assistant settings.
 - **Stream Type**: Uses `HyperHDRLedColorsStream` from `hyperhdr.stream` with automatic reconnection and admin password authentication.
+- **HLS / live view**: Advertises `CameraEntityFeature.STREAM`. The integration serves the JPEG buffer as multipart MJPEG on localhost, and ffmpeg on the Home Assistant host transcodes that to H.264 MPEG-TS. Home Assistant’s stream worker only remuxes, so the H.264 source is what becomes `/api/hls/…` for tablet live view, Lovelace, and `camera.record`. A raw JPEG source would be published as `mp4v`, which those players do not decode. The localhost MJPEG feed **repeats the last frame** on a short interval so static or briefly paused LED colors do not starve ffmpeg (that used to stop HLS after ~30s with `Immediate exit requested`). MJPEG camera cards that do not use HLS still work via the existing handler. Live view is **HLS-only** (go2rtc WebRTC is not used). The HyperHDR device keeps sending imagestream as today.
 - **Authentication**: Requires admin password for instances with Local API Authentication enabled (token-only auth is insufficient for imagestream).
 
 ### LED Gradient Camera
@@ -136,6 +137,7 @@ The **LED Gradient** camera entity visualizes the raw per-LED color data as a gr
 
 - **Purpose**: Displays a JPEG image representing the current color of each LED, stretched to a visible height. Useful for monitoring individual LED output in real time.
 - **Disabled by Default**: This entity is **disabled by default**. Enable it in Home Assistant settings if desired.
+- **Still only**: Remains a still/MJPEG-card camera (no HLS). Encoding a 20px-tall color bar as H.264 is not worth the CPU cost.
 - **Stream Type**: Uses `HyperHDRLedGradientStream` from `hyperhdr.stream` with built-in RGB-to-JPEG conversion (via Pillow), automatic reconnection, and the same authentication support as the LED Colors camera.
 - **Image Format**: Raw binary LED data (RGB bytes) is converted into a 1-pixel-tall JPEG image scaled to 20px height for visibility.
 - **Average Color Dispatch**: This camera computes the average RGB color from each frame and dispatches it to the Average Color sensor (throttled to every 2 seconds to avoid flooding the event bus).

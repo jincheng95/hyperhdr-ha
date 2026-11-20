@@ -29,6 +29,27 @@ HyperHDR instances are automatically discovered via **SSDP**. When found, a noti
 <!-- {% endif %} -->
 
 <!-- {% if installed %} -->
+# Integration v1.3.2
+
+LED Colors live view now plays in browsers and the Home Assistant app:
+
+- **H.264 HLS:** ffmpeg on the Home Assistant host transcodes the local MJPEG buffer to H.264 MPEG-TS ([#123](https://github.com/Shaffer-Softworks/hyperhdr-ha/pull/123)). Home Assistant’s stream worker only remuxes, so the v1.3.1 JPEG source was published as `mp4v`, which those players cannot decode.
+- Classic MJPEG camera cards are unchanged. LED Gradient stays a still image.
+- **Dependency:** the Home Assistant `ffmpeg` integration is required.
+
+# Integration v1.3.1
+
+Since **v1.2.1**:
+
+- **HDR Tone Mapping Mode** select: Off / On / **Auto** ([#121](https://github.com/Shaffer-Softworks/hyperhdr-ha/pull/121))
+  - Off/On → `videomodehdr` (`HDR` 0/1)
+  - Auto → `automaticToneMapping.enable` via config get/set (v21+)
+  - Distinct from the existing HDR component switch (processing enable/disable)
+  - Removes the old HDR intensity number entity (pruned automatically)
+- **LED Colors camera:** HLS / live view support plus a local multipart MJPEG server for FFmpeg and classic MJPEG cards ([#120](https://github.com/Shaffer-Softworks/hyperhdr-ha/pull/120))
+- **Solid color brightness:** anchors full-brightness RGB so hue no longer drifts when dimming; clamps red-shift below ~5% ([#119](https://github.com/Shaffer-Softworks/hyperhdr-ha/pull/119))
+- Docs synced; version warn cutoff raised to **22.0.0.0**
+
 # Integration v1.2.1
 
 HyperHDR **v22** smoothing controls via authenticated config get/set:
