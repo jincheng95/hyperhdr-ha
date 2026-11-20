@@ -21,8 +21,10 @@ same upstream base. It resets to `1` whenever the fork is rebuilt on a newer ups
 v1.0.0        upstream
 v1.0.0.1      fork, first change on top of upstream 1.0.0
 v1.2.1        upstream
-v1.2.1.1      fork, rebuilt on upstream 1.2.1               <- current
-v1.2.1.2      fork, second change on the same base
+v1.2.1.1      fork, rebuilt on upstream 1.2.1
+v1.3.3        upstream
+v1.3.3.1      fork, rebuilt on upstream 1.3.3               <- current
+v1.3.3.2      fork, second change on the same base
 ```
 
 Ordering is monotonic under HACS's `AwesomeVersion` comparison, which compares segment by
@@ -42,7 +44,7 @@ must carry a `hyperhdr.zip` asset whose contents sit at the **zip root** (`manif
 `__init__.py`, …) — HACS unpacks that into `custom_components/hyperhdr/`.
 
 ```sh
-VERSION=1.2.1.2                       # bump the fourth segment
+VERSION=1.3.3.2                       # bump the fourth segment
 # edit custom_components/hyperhdr/manifest.json -> "version": "$VERSION"
 git commit -am "chore: bump manifest to $VERSION"
 rm -f hyperhdr.zip
@@ -65,8 +67,16 @@ Conflict-prone files:
 - `manifest.json` conflicts on the `version` field every time. The fork's `name`, `codeowners`
   and URL changes sit beside it.
 - `hacs.json` can conflict on `name`.
+- `manifest.json` also conflicts when upstream adds a key beside `documentation`, as v1.3.1 did
+  with `dependencies: ["ffmpeg"]`. Keep upstream's key and the fork's URL.
 - `smoothing_config.py` conflicts if upstream touches `async_patch_smoothing_config`. Keep the
   full-config guard unless upstream now sends whole configs itself.
+- `select.py` conflicts if upstream touches `_async_set_auto_enabled`. Keep the call to
+  `async_patch_config_section`.
+
+After every merge, grep the integration for `async_set_config` and
+`async_update_smoothing_config`. The only hit should be the one inside
+`async_patch_config_section`. Any other hit is a new partial write that needs the guard.
 
 ## Local changes vs upstream
 
@@ -84,7 +94,7 @@ toward white on every brightness change. #119 also caches the full-brightness RG
 session and floors solid-colour brightness at 12. The fork took upstream's `light.py` verbatim
 in v1.2.1.1 and now carries no change to it.
 
-### `smoothing_config.py` — smoothing writes send the whole config
+### `smoothing_config.py`, `select.py` — config writes send the whole config
 
 Upstream v1.1.0 (#115) added nine smoothing entities, disabled by default. Each one writes
 through `async_patch_smoothing_config`. Upstream calls the library's
@@ -101,20 +111,36 @@ A partial write did exactly that on 2026-08-23.
 The entities register on this install because the server has `localAdminAuth: false`. HyperHDR
 grants LAN clients admin rights, so `getconfig` succeeds without a password.
 
-The fork replaces the body of `async_patch_smoothing_config` with a read-modify-write:
+The fork adds `async_patch_config_section(client, section, **fields)`, a read-modify-write:
 
 1. Call `getconfig` and take the full config from `info`.
-2. Refuse the write and log a warning if `leds`, `device`, `network`, `general` or `smoothing`
-   is missing.
-3. Merge the new fields into `smoothing` on a deep copy.
+2. Refuse the write and log a warning if `leds`, `device`, `network`, `general` or the target
+   section is missing.
+3. Merge the new fields into the target section on a deep copy.
 4. Send the whole config back with `setconfig`.
-5. Re-read smoothing, or keep the merged values if the re-read fails, and notify the entities.
+5. Return the merged section, or `None` if the write was refused or failed.
 
-The signature and the `bool` return are unchanged, so the callers in `number.py`, `select.py`
-and `switch.py` work as before. No other code path in the integration sends `setconfig`.
+`async_patch_smoothing_config` calls it with `smoothing`, then re-reads smoothing (or keeps the
+merged values if the re-read fails) and notifies the entities. Its signature and `bool` return
+are unchanged, so the callers in `number.py`, `select.py` and `switch.py` work as before.
+
+Upstream v1.3.1 (#121) added the HDR Tone Mapping Mode select, enabled by default and registered
+on every instance. Its Auto option wrote an `automaticToneMapping`-only fragment through
+`setconfig`, and so did Off/On whenever Auto was active. The fork routes
+`_async_set_auto_enabled` through `async_patch_config_section` instead. Plain Off/On with Auto
+inactive uses the `videomodehdr` command and never touched the config.
+
+No other code path in the integration sends `setconfig`.
 
 The HyperHDR web UI also saves whole configs. An API write and a UI save can overwrite each
 other, so the last writer wins.
+
+### Upstream v1.3.x — taken as is
+
+The LED Colors camera now serves HLS by transcoding to H.264 with ffmpeg (#120, #123, #126), so
+the manifest depends on Home Assistant's `ffmpeg` integration. The HyperHDR version warning
+cutoff moved to 22.0.0.0. Upstream also committed a stray `tools.yaml` (a Portainer tool list)
+at the repo root. The fork keeps it to avoid a standing delta, and it never reaches the zip.
 
 ### Deliberately NOT changed
 
