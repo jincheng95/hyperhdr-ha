@@ -83,6 +83,45 @@ async def async_load_smoothing_config(
     return await hyperhdr_client.async_get_smoothing_config()
 
 
+_REQUIRED_CONFIG_SECTIONS = ("leds", "device", "network", "general")
+
+
+async def async_patch_config_section(
+    hyperhdr_client: client.HyperHDRClient,
+    section: str,
+    **fields: Any,
+) -> dict[str, Any] | None:
+    """Patch one config section by rewriting the full instance config.
+
+    HyperHDR's setconfig auto-corrects a partial config by re-defaulting every
+    required section (leds, device, network, general), so only whole configs
+    are sent. Returns the merged section, or None when the write is refused
+    or fails.
+    """
+    response = await hyperhdr_client.async_get_config()
+    full = (response or {}).get("info") if client.ResponseOK(response) else None
+    if (
+        not isinstance(full, dict)
+        or not all(key in full for key in _REQUIRED_CONFIG_SECTIONS)
+        or not isinstance(full.get(section), dict)
+    ):
+        _LOGGER.warning(
+            "Refusing %s write: getconfig did not return a full config", section
+        )
+        return None
+
+    full = copy.deepcopy(full)
+    full[section] = {**full[section], **fields}
+
+    if not client.ResponseOK(await hyperhdr_client.async_set_config(config=full)):
+        _LOGGER.warning(
+            "Failed to update HyperHDR %s config fields %s", section, list(fields)
+        )
+        return None
+
+    return full[section]
+
+
 async def async_patch_smoothing_config(
     hass: HomeAssistant,
     entry_id: str,
@@ -90,40 +129,19 @@ async def async_patch_smoothing_config(
     instance_num: int,
     **fields: Any,
 ) -> bool:
-    """Patch smoothing fields by rewriting the full instance config.
-
-    HyperHDR's setconfig auto-corrects a partial config by re-defaulting every
-    required section (leds, device, network, general), so only whole configs
-    are sent.
-    """
+    """Patch smoothing fields and notify the smoothing entities."""
     entry_data = hass.data[DOMAIN][entry_id]
     hyperhdr_client: client.HyperHDRClient = entry_data[CONF_INSTANCE_CLIENTS][
         instance_num
     ]
 
-    response = await hyperhdr_client.async_get_config()
-    full = (response or {}).get("info") if client.ResponseOK(response) else None
-    if not isinstance(full, dict) or not all(
-        key in full for key in ("leds", "device", "network", "general", "smoothing")
-    ):
-        _LOGGER.warning(
-            "Refusing smoothing write: getconfig did not return a full config"
-        )
-        return False
-
-    full = copy.deepcopy(full)
-    full["smoothing"] = {**full["smoothing"], **fields}
-
-    if not client.ResponseOK(await hyperhdr_client.async_set_config(config=full)):
-        _LOGGER.warning(
-            "Failed to update HyperHDR smoothing config fields %s",
-            list(fields),
-        )
+    merged = await async_patch_config_section(hyperhdr_client, "smoothing", **fields)
+    if merged is None:
         return False
 
     updated = await hyperhdr_client.async_get_smoothing_config()
     if updated is None:
-        updated = full["smoothing"]
+        updated = merged
     entry_data.setdefault(CONF_SMOOTHING_CONFIGS, {})[instance_num] = updated
     async_dispatcher_send(
         hass,

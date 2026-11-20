@@ -39,6 +39,7 @@ from .const import (
 )
 from .smoothing_config import (
     async_ensure_config_auth,
+    async_patch_config_section,
     async_patch_smoothing_config,
     smoothing_config_available,
 )
@@ -319,16 +320,10 @@ class HyperHDRHdrToneMappingSelect(HyperHDRSelect):
                 "Cannot change HyperHDR automatic tone mapping; config unavailable"
             )
             return False
-        payload = {**self._auto_config, KEY_ENABLE: enable}
-        response = await self._client.async_set_config(
-            config={KEY_AUTOMATIC_TONE_MAPPING: payload}
+        payload = await async_patch_config_section(
+            self._client, KEY_AUTOMATIC_TONE_MAPPING, **{KEY_ENABLE: enable}
         )
-        if not client.ResponseOK(response):
-            _LOGGER.warning(
-                "Failed to set HyperHDR automaticToneMapping.enable=%s: %s",
-                enable,
-                (response or {}).get("error") if isinstance(response, dict) else None,
-            )
+        if payload is None:
             return False
         self._auto_config = payload
         self._auto_enabled = enable
